@@ -342,30 +342,28 @@ def main() -> None:
 
     print_entries(entries)
 
-    # ── Offer to export to timeline ───────────────────────────────────────────
+    # ── Auto-export suspicious entries to timeline ────────────────────────────
+    import json
     suspicious = [e for e in entries if e["suspicious"] and e["last_run"]]
     if suspicious:
-        save = console.input("\n[dim]Export suspicious entries to timeline? (y/N):[/dim] ").strip().lower()
-        if save == "y":
-            import json
-            events_path = os.path.join("data", "timeline_events.json")
-            existing: list[dict] = []
-            if os.path.exists(events_path):
-                with open(events_path) as f:
-                    existing = json.load(f)
+        events_path = os.path.join("data", "timeline_events.json")
+        existing: list[dict] = []
+        if os.path.exists(events_path):
+            with open(events_path) as f:
+                existing = json.load(f)
 
-            new_events = []
-            for e in suspicious:
-                new_events.append({
-                    "timestamp": e["last_run"].isoformat(),
-                    "label":     os.path.basename(e["decoded"]) or e["decoded"],
-                    "category":  "registry",
-                    "severity":  "suspicious",
-                })
-            all_events = existing + new_events
-            with open(events_path, "w") as f:
-                json.dump(all_events, f, indent=2)
-            console.print(f"[green]Events appended to:[/green] {events_path}")
+        new_events = []
+        for e in suspicious:
+            new_events.append({
+                "timestamp": e["last_run"].isoformat(),
+                "label":     os.path.basename(e["decoded"]) or e["decoded"],
+                "category":  "registry",
+                "severity":  "suspicious",
+            })
+        os.makedirs("data", exist_ok=True)
+        with open(events_path, "w") as f:
+            json.dump(existing + new_events, f, indent=2)
+        console.print(f"[dim]✔ {len(new_events)} suspicious entries auto-saved to timeline.[/dim]")
 
 
 if __name__ == "__main__":

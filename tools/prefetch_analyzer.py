@@ -360,32 +360,32 @@ def main() -> None:
 
     print_clusters(clusters)
 
-    # ── Offer to pass data to timeline ───────────────────────────────────────
-    save = console.input("[dim]Export events for the timeline? (y/N):[/dim] ").strip().lower()
-    if save == "y":
-        import json, os as _os
-        events_path = _os.path.join("data", "timeline_events.json")
-        existing: list[dict] = []
-        if _os.path.exists(events_path):
-            with open(events_path) as f:
-                existing = json.load(f)
+    # ── Auto-export to timeline ───────────────────────────────────────────────
+    import json
+    events_path = os.path.join("data", "timeline_events.json")
+    existing: list[dict] = []
+    if os.path.exists(events_path):
+        with open(events_path) as f:
+            existing = json.load(f)
 
-        new_events = []
-        for e in entries:
-            if not e["last_runs"]:
-                continue
-            sev = "suspicious" if is_suspicious(e["exe_name"]) else "info"
-            new_events.append({
-                "timestamp": e["last_runs"][0].isoformat(),
-                "label":     e["exe_name"],
-                "category":  "prefetch",
-                "severity":  sev,
-            })
+    new_events = []
+    for e in entries:
+        if not e["last_runs"]:
+            continue
+        sev = "suspicious" if is_suspicious(e["exe_name"]) else "info"
+        new_events.append({
+            "timestamp": e["last_runs"][0].isoformat(),
+            "label":     e["exe_name"],
+            "category":  "prefetch",
+            "severity":  sev,
+        })
 
+    if new_events:
         all_events = existing + new_events
+        os.makedirs("data", exist_ok=True)
         with open(events_path, "w") as f:
             json.dump(all_events, f, indent=2)
-        console.print(f"[green]Events appended to:[/green] {events_path}")
+        console.print(f"[dim]✔ {len(new_events)} events auto-saved to timeline.[/dim]")
 
 
 if __name__ == "__main__":

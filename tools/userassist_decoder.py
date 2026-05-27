@@ -316,29 +316,19 @@ def main() -> None:
         entries = parse_reg_file(source)
 
     else:
-        # Nothing found — ask
-        console.print(
-            "[dim]Tip: export the UserAssist key on the suspect's PC and save it as "
-            "[bold]data/ua.reg[/bold] — this tool will find it automatically next time.\n\n"
-            "To export on their PC:  [bold]Win+R → regedit → "
-            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\UserAssist "
-            "→ right-click → Export[/bold][/dim]\n"
-        )
-        console.print("  [bold]1.[/bold] Enter path to a .reg file manually")
-        console.print("  [bold]2.[/bold] Read live registry (Windows only)\n")
-        choice = console.input("[bold]Choose (1 or 2):[/bold] ").strip()
-
-        if choice == "1":
-            reg_path = console.input("[bold]Path to .reg file:[/bold] ").strip().strip('"').strip("'")
-            if not reg_path or not os.path.isfile(reg_path):
-                console.print("[red]File not found. Returning to menu.[/red]")
-                return
-            entries = parse_reg_file(reg_path)
-        elif choice == "2":
-            entries = read_live_registry()
-        else:
-            console.print("[red]Invalid choice.[/red]")
-            return
+        console.print(Panel(
+            "No registry export found automatically.\n\n"
+            "During a screenshare via AnyDesk:\n"
+            "  1. On their PC: press [bold]Win+R[/bold], type [bold]regedit[/bold]\n"
+            "  2. Navigate to:\n"
+            "     [dim]HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\UserAssist[/dim]\n"
+            "  3. Right-click [bold]UserAssist[/bold] → [bold]Export[/bold] → save as [bold]ua.reg[/bold]\n"
+            "  4. Transfer [bold]ua.reg[/bold] to [bold]ss-toolkit/data/ua.reg[/bold]\n"
+            "  5. Re-open this tool — it will scan automatically.",
+            title="[yellow]No Registry Export Found[/yellow]",
+            border_style="yellow",
+        ))
+        return
 
     print_entries(entries)
 

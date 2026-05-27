@@ -306,18 +306,18 @@ def main() -> None:
     raw_path = _auto_find_prefetch()
 
     if raw_path:
-        console.print(f"[dim]Auto-detected prefetch folder:[/dim] [bold]{raw_path}[/bold]\n")
+        console.print(f"[dim]Auto-detected:[/dim] [bold]{raw_path}[/bold]\n")
     else:
-        # Only ask if auto-detection failed
-        if sys.platform != "win32":
-            console.print(
-                "[dim]Tip: drop .pf files into [bold]data/prefetch/[/bold] "
-                "and this tool will find them automatically next time.\n[/dim]"
-            )
-        raw_path = console.input("[bold]Enter path to Prefetch folder (or single .pf file):[/bold] ").strip().strip('"').strip("'")
-        if not raw_path:
-            console.print("[red]No path entered. Returning to menu.[/red]")
-            return
+        console.print(Panel(
+            "No .pf files found automatically.\n\n"
+            "During a screenshare via AnyDesk:\n"
+            "  1. Copy the suspect's [bold]C:\\\\Windows\\\\Prefetch[/bold] folder\n"
+            "  2. Paste the .pf files into [bold]ss-toolkit/data/prefetch/[/bold]\n"
+            "  3. Re-open this tool — it will scan automatically.",
+            title="[yellow]No Prefetch Files Found[/yellow]",
+            border_style="yellow",
+        ))
+        return
 
     pf_files: list[str] = []
 

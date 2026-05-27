@@ -206,6 +206,10 @@ def collect_prefetch():
                 parsed = _parse_pf(os.path.join(pf_dir, fname))
                 if parsed:
                     results.append(parsed)
+    except PermissionError:
+        print(f"\n  {RED}{BOLD}[!] Access denied to Prefetch folder.{RESET}")
+        print(f"  {YELLOW}    Right-click collector.exe and choose 'Run as administrator'.{RESET}\n")
+        return []
     except Exception:
         pass
     return sorted(results, key=lambda x: x["last_run"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)

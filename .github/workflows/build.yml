@@ -46,12 +46,6 @@ jobs:
           --hidden-import hashlib
           --hidden-import subprocess
           --hidden-import platform
-          --hidden-import rich
-          --hidden-import rich.console
-          --hidden-import rich.table
-          --hidden-import rich.panel
-          --hidden-import rich.box
-          --collect-all rich
           collector.py
 
       - name: Delete old latest release

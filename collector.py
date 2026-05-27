@@ -1,51 +1,52 @@
 #!/usr/bin/env python3
 """
 collector.py — SS Toolkit: Windows Evidence Collector
-───────────────────────────────────────────────────────
-Drop this EXE on the suspect's PC during a screenshare.
-It automatically collects:
-  • Prefetch files  (C:\\Windows\\Prefetch)
-  • UserAssist registry  (recently run programs)
-  • Running processes
-  • Suspicious files in common cheat locations
-  • .minecraft folder contents
-  • Recently modified files on the Desktop / Downloads
-
-Everything is displayed on screen and saved to a report
-file on the Desktop:  ss_report_<timestamp>.txt
-
-No installation needed.  Single EXE, runs and exits.
+Drop this EXE on the suspect's PC. It scans automatically and saves
+a report to their Desktop. Uses ONLY Python built-in modules so it
+will always run without any dependency issues.
 """
 
+# ── All imports are stdlib only — nothing external ────────────────────────────
 import os
 import sys
 import struct
 import hashlib
 import platform
 import subprocess
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ── Rich for coloured output ──────────────────────────────────────────────────
-try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
-    from rich.rule import Rule
-    from rich import box
-    _RICH = True
-except ImportError:
-    _RICH = False
-
-# ── winreg for live registry (Windows only) ───────────────────────────────────
 if sys.platform == "win32":
     import winreg
-    import ctypes
-
-console = Console() if _RICH else None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Shared detection lists (inlined so collector.exe is self-contained)
+# Console colours (plain ANSI — no rich needed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Enable ANSI colours on Windows 10+
+if sys.platform == "win32":
+    os.system("color")
+
+RED    = "\033[91m"
+YELLOW = "\033[93m"
+GREEN  = "\033[92m"
+CYAN   = "\033[96m"
+BOLD   = "\033[1m"
+DIM    = "\033[2m"
+RESET  = "\033[0m"
+
+def cprint(text, colour=""):
+    print(f"{colour}{text}{RESET}" if colour else text)
+
+def rule(title):
+    width = 60
+    print(f"\n{CYAN}{'─' * width}{RESET}")
+    print(f"{CYAN}{BOLD}  {title}{RESET}")
+    print(f"{CYAN}{'─' * width}{RESET}\n")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Detection lists
 # ─────────────────────────────────────────────────────────────────────────────
 
 GHOST_CLIENTS = [
@@ -63,7 +64,7 @@ BYPASS_INDICATORS = [
     "bypass", "javaagent", "java agent", "premain", "agentmain",
     "agent.jar", "dll inject", "dll injection", "createremotethread",
     "classtransformer", "bytebuddy", "javassist", "recaf",
-    "unsigned jar", "bytecode", "memory patch", "hook",
+    "unsigned jar", "bytecode", "memory patch",
     "watchdog bypass", "grim bypass", "intave bypass", "polar bypass",
     "vulcan bypass", "matrix bypass", "hypixel bypass",
 ]
@@ -80,9 +81,7 @@ FREE_CLIENTS = [
     "liquidbounce", "nodus", "enchanted",
 ]
 
-ALL_CHEATS = GHOST_CLIENTS + BYPASS_INDICATORS + DEBUG_TOOLS + FREE_CLIENTS
-
-def classify(name: str) -> str:
+def classify(name):
     low = name.lower()
     for kw in GHOST_CLIENTS + BYPASS_INDICATORS:
         if kw in low:
@@ -98,15 +97,18 @@ def classify(name: str) -> str:
 
 EPOCH_DIFF = 116_444_736_000_000_000
 
-def filetime_to_dt(ft: int) -> datetime | None:
+def filetime_to_dt(ft):
     if ft == 0:
         return None
     unix_100ns = ft - EPOCH_DIFF
     if unix_100ns < 0:
         return None
-    return datetime.fromtimestamp(unix_100ns / 10_000_000, tz=timezone.utc)
+    try:
+        return datetime.fromtimestamp(unix_100ns / 10_000_000, tz=timezone.utc)
+    except Exception:
+        return None
 
-def rot13(text: str) -> str:
+def rot13(text):
     result = []
     for ch in text:
         if "a" <= ch <= "z":
@@ -117,571 +119,367 @@ def rot13(text: str) -> str:
             result.append(ch)
     return "".join(result)
 
-def sha256_file(path: str) -> str:
+def sha256_file(path):
     h = hashlib.sha256()
     try:
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(65536), b""):
                 h.update(chunk)
         return h.hexdigest()
-    except OSError:
+    except Exception:
         return "unreadable"
-
-def cprint(text: str, style: str = "") -> None:
-    if _RICH:
-        console.print(f"[{style}]{text}[/{style}]" if style else text)
-    else:
-        print(text)
-
-def rule(title: str) -> None:
-    if _RICH:
-        console.rule(f"[bold cyan]{title}[/bold cyan]")
-    else:
-        print(f"\n{'─'*60}\n  {title}\n{'─'*60}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. System info
 # ─────────────────────────────────────────────────────────────────────────────
 
-def collect_sysinfo() -> dict:
-    info = {
+def collect_sysinfo():
+    return {
         "hostname":  platform.node(),
         "os":        platform.version(),
-        "user":      os.environ.get("USERNAME", "unknown"),
+        "user":      os.environ.get("USERNAME", os.environ.get("USER", "unknown")),
         "timestamp": datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     }
-    return info
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Prefetch
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PF_LAYOUT = {
-    17: {"exe_off": 0x10, "exe_len": 60, "runs_off": 0x78, "runs_n": 1, "count_off": 0x90},
-    23: {"exe_off": 0x10, "exe_len": 60, "runs_off": 0x80, "runs_n": 8, "count_off": 0xD0},
-    26: {"exe_off": 0x10, "exe_len": 60, "runs_off": 0x80, "runs_n": 8, "count_off": 0xD0},
-    30: {"exe_off": 0x10, "exe_len": 60, "runs_off": 0x80, "runs_n": 8, "count_off": 0xD0},
-    31: {"exe_off": 0x10, "exe_len": 60, "runs_off": 0x80, "runs_n": 8, "count_off": 0xD0},
+    17: {"exe_off": 0x10, "exe_len": 60, "runs_off": 0x78, "runs_n": 1,  "count_off": 0x90},
+    23: {"exe_off": 0x10, "exe_len": 60, "runs_off": 0x80, "runs_n": 8,  "count_off": 0xD0},
+    26: {"exe_off": 0x10, "exe_len": 60, "runs_off": 0x80, "runs_n": 8,  "count_off": 0xD0},
+    30: {"exe_off": 0x10, "exe_len": 60, "runs_off": 0x80, "runs_n": 8,  "count_off": 0xD0},
+    31: {"exe_off": 0x10, "exe_len": 60, "runs_off": 0x80, "runs_n": 8,  "count_off": 0xD0},
 }
 
-def _parse_pf(path: str) -> dict | None:
+def _parse_pf(path):
     try:
         data = Path(path).read_bytes()
-    except OSError:
+    except Exception:
         return None
 
-    # MAM compressed (Win10)
     if data[:3] == b"MAM":
-        try:
-            import mam
-            data = mam.decompress(data)
-        except Exception:
-            fname = os.path.basename(path).rsplit("-", 1)[0]
-            return {"exe": fname, "runs": 0, "last_run": None, "compressed": True}
+        fname = os.path.basename(path).rsplit("-", 1)[0]
+        return {"exe": fname, "runs": 0, "last_run": None, "compressed": True, "severity": classify(fname)}
 
     if len(data) < 8 or data[4:8] != b"SCCA":
         return None
 
-    version = struct.unpack_from("<I", data, 0)[0]
-    layout  = _PF_LAYOUT.get(version)
-    if not layout:
+    try:
+        version = struct.unpack_from("<I", data, 0)[0]
+        layout  = _PF_LAYOUT.get(version)
+        if not layout:
+            fname = os.path.basename(path).rsplit("-", 1)[0]
+            return {"exe": fname, "runs": 0, "last_run": None, "compressed": False, "severity": classify(fname)}
+
+        exe_raw = data[layout["exe_off"]: layout["exe_off"] + layout["exe_len"]]
+        exe     = exe_raw.decode("utf-16-le", errors="replace").rstrip("\x00") or os.path.basename(path)
+
+        runs = 0
+        if len(data) >= layout["count_off"] + 4:
+            runs = struct.unpack_from("<I", data, layout["count_off"])[0]
+
+        last_run = None
+        for i in range(layout["runs_n"]):
+            off = layout["runs_off"] + i * 8
+            if len(data) < off + 8:
+                break
+            ft  = struct.unpack_from("<Q", data, off)[0]
+            dt  = filetime_to_dt(ft)
+            if dt and (last_run is None or dt > last_run):
+                last_run = dt
+
+        return {"exe": exe, "runs": runs, "last_run": last_run, "compressed": False, "severity": classify(exe)}
+    except Exception:
         return None
 
-    # Exe name
-    exe_raw = data[layout["exe_off"]: layout["exe_off"] + layout["exe_len"]]
-    exe     = exe_raw.decode("utf-16-le", errors="replace").rstrip("\x00")
 
-    # Run count
-    runs = 0
-    if len(data) >= layout["count_off"] + 4:
-        runs = struct.unpack_from("<I", data, layout["count_off"])[0]
-
-    # Last run time
-    last_run = None
-    for i in range(layout["runs_n"]):
-        off = layout["runs_off"] + i * 8
-        if len(data) < off + 8:
-            break
-        ft = struct.unpack_from("<Q", data, off)[0]
-        dt = filetime_to_dt(ft)
-        if dt and (last_run is None or dt > last_run):
-            last_run = dt
-
-    return {"exe": exe, "runs": runs, "last_run": last_run, "compressed": False}
-
-
-def collect_prefetch() -> list[dict]:
+def collect_prefetch():
     pf_dir = r"C:\Windows\Prefetch"
     if not os.path.isdir(pf_dir):
         return []
-
     results = []
-    for fname in os.listdir(pf_dir):
-        if not fname.lower().endswith(".pf"):
-            continue
-        parsed = _parse_pf(os.path.join(pf_dir, fname))
-        if parsed:
-            sev = classify(parsed["exe"])
-            results.append({**parsed, "severity": sev})
-
-    return sorted(
-        results,
-        key=lambda x: x["last_run"] or datetime.min.replace(tzinfo=timezone.utc),
-        reverse=True,
-    )
+    try:
+        for fname in os.listdir(pf_dir):
+            if fname.lower().endswith(".pf"):
+                parsed = _parse_pf(os.path.join(pf_dir, fname))
+                if parsed:
+                    results.append(parsed)
+    except Exception:
+        pass
+    return sorted(results, key=lambda x: x["last_run"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. UserAssist registry
+# 3. UserAssist
 # ─────────────────────────────────────────────────────────────────────────────
 
 UA_PATH = r"Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist"
 
-def collect_userassist() -> list[dict]:
+def collect_userassist():
     if sys.platform != "win32":
         return []
-
     entries = []
     try:
         ua_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, UA_PATH)
-    except FileNotFoundError:
-        return []
-
-    guid_i = 0
-    while True:
-        try:
-            guid = winreg.EnumKey(ua_key, guid_i)
-        except OSError:
-            break
-        guid_i += 1
-        try:
-            count_key = winreg.OpenKey(ua_key, f"{guid}\\Count")
-        except FileNotFoundError:
-            continue
-
-        val_i = 0
+        guid_i = 0
         while True:
             try:
-                name, data, _ = winreg.EnumValue(count_key, val_i)
+                guid = winreg.EnumKey(ua_key, guid_i)
             except OSError:
                 break
-            val_i += 1
-            if not isinstance(data, bytes) or len(data) < 8:
+            guid_i += 1
+            try:
+                count_key = winreg.OpenKey(ua_key, f"{guid}\\Count")
+            except Exception:
                 continue
-            decoded = rot13(name)
-            run_count = struct.unpack_from("<I", data, 4)[0] if len(data) >= 8 else 0
-            last_run  = None
-            if len(data) >= 68:
-                ft = struct.unpack_from("<Q", data, 60)[0]
-                last_run = filetime_to_dt(ft)
-            sev = classify(decoded)
-            entries.append({
-                "decoded":   decoded,
-                "run_count": run_count,
-                "last_run":  last_run,
-                "severity":  sev,
-            })
-        count_key.Close()
-    ua_key.Close()
+            val_i = 0
+            while True:
+                try:
+                    name, data, _ = winreg.EnumValue(count_key, val_i)
+                except OSError:
+                    break
+                val_i += 1
+                if not isinstance(data, bytes) or len(data) < 8:
+                    continue
+                decoded   = rot13(name)
+                run_count = struct.unpack_from("<I", data, 4)[0] if len(data) >= 8 else 0
+                last_run  = None
+                if len(data) >= 68:
+                    ft = struct.unpack_from("<Q", data, 60)[0]
+                    last_run = filetime_to_dt(ft)
+                entries.append({
+                    "decoded":   decoded,
+                    "run_count": run_count,
+                    "last_run":  last_run,
+                    "severity":  classify(decoded),
+                })
+            count_key.Close()
+        ua_key.Close()
+    except Exception:
+        pass
     return entries
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Running processes
 # ─────────────────────────────────────────────────────────────────────────────
 
-def collect_processes() -> list[dict]:
-    procs = []
+def collect_processes():
     if sys.platform != "win32":
-        return procs
+        return []
+    procs = []
     try:
         out = subprocess.check_output(
             ["tasklist", "/fo", "csv", "/nh"],
             stderr=subprocess.DEVNULL,
             text=True,
+            creationflags=0x08000000,   # CREATE_NO_WINDOW
         )
         for line in out.strip().splitlines():
             parts = [p.strip('"') for p in line.split('","')]
-            if len(parts) < 2:
-                continue
-            name = parts[0]
-            pid  = parts[1]
-            sev  = classify(name)
-            procs.append({"name": name, "pid": pid, "severity": sev})
+            if len(parts) >= 2:
+                name = parts[0]
+                pid  = parts[1]
+                procs.append({"name": name, "pid": pid, "severity": classify(name)})
     except Exception:
         pass
     return procs
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Suspicious files in common locations
+# 5. Suspicious files
 # ─────────────────────────────────────────────────────────────────────────────
 
 SCAN_DIRS = [
     os.path.expandvars(r"%APPDATA%\.minecraft\mods"),
     os.path.expandvars(r"%APPDATA%\.minecraft"),
-    os.path.expandvars(r"%APPDATA%\Roaming"),
     os.path.expandvars(r"%TEMP%"),
     os.path.expandvars(r"%USERPROFILE%\Desktop"),
     os.path.expandvars(r"%USERPROFILE%\Downloads"),
     os.path.expandvars(r"%LOCALAPPDATA%\Temp"),
 ]
-
 SCAN_EXTS = {".jar", ".exe", ".bat", ".vbs", ".ps1"}
 
-def collect_suspicious_files() -> list[dict]:
+def collect_suspicious_files():
     found = []
     for scan_dir in SCAN_DIRS:
         if not os.path.isdir(scan_dir):
             continue
         try:
             for fname in os.listdir(scan_dir):
-                ext = os.path.splitext(fname)[1].lower()
-                if ext not in SCAN_EXTS:
+                if os.path.splitext(fname)[1].lower() not in SCAN_EXTS:
                     continue
                 sev = classify(fname)
-                if sev:
-                    fpath = os.path.join(scan_dir, fname)
-                    try:
-                        mtime = datetime.fromtimestamp(
-                            os.path.getmtime(fpath), tz=timezone.utc
-                        ).strftime("%Y-%m-%d %H:%M")
-                    except OSError:
-                        mtime = "?"
-                    found.append({
-                        "path":     fpath,
-                        "name":     fname,
-                        "severity": sev,
-                        "modified": mtime,
-                        "sha256":   sha256_file(fpath),
-                    })
-        except PermissionError:
+                if not sev:
+                    continue
+                fpath = os.path.join(scan_dir, fname)
+                try:
+                    mtime = datetime.fromtimestamp(os.path.getmtime(fpath), tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+                except Exception:
+                    mtime = "?"
+                found.append({"path": fpath, "name": fname, "severity": sev, "modified": mtime, "sha256": sha256_file(fpath)})
+        except Exception:
             pass
     return found
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. .minecraft mod list
+# 6. Minecraft mods
 # ─────────────────────────────────────────────────────────────────────────────
 
-def collect_mods() -> list[dict]:
+def collect_mods():
     mods_dir = os.path.expandvars(r"%APPDATA%\.minecraft\mods")
     if not os.path.isdir(mods_dir):
         return []
     mods = []
-    for fname in os.listdir(mods_dir):
-        sev = classify(fname)
-        fpath = os.path.join(mods_dir, fname)
-        try:
-            size = os.path.getsize(fpath)
-        except OSError:
-            size = 0
-        mods.append({"name": fname, "size": size, "severity": sev})
+    try:
+        for fname in os.listdir(mods_dir):
+            try:
+                size = os.path.getsize(os.path.join(mods_dir, fname))
+            except Exception:
+                size = 0
+            mods.append({"name": fname, "size": size, "severity": classify(fname)})
+    except Exception:
+        pass
     return sorted(mods, key=lambda x: (x["severity"] != "critical", x["severity"] != "suspicious", x["name"]))
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Display helpers
+# Display
 # ─────────────────────────────────────────────────────────────────────────────
 
-_SEV_STYLE = {
-    "critical":   "bold red",
-    "suspicious": "bold yellow",
-    "":           "dim",
-}
+def sev_colour(sev):
+    if sev == "critical":   return RED + BOLD
+    if sev == "suspicious": return YELLOW + BOLD
+    return ""
 
-def _sev_label(sev: str) -> str:
-    if sev == "critical":
-        return "[bold red]⚠ CRITICAL[/bold red]"
-    if sev == "suspicious":
-        return "[bold yellow]⚠ SUSPICIOUS[/bold yellow]"
-    return "[dim]clean[/dim]"
-
-
-def display_prefetch(entries: list[dict]) -> None:
+def display_prefetch(entries):
     rule("Prefetch — Recently Run Programs")
     flagged = [e for e in entries if e["severity"]]
-    cprint(f"Total .pf files: {len(entries)}  |  Flagged: {len(flagged)}\n")
-
-    if not _RICH:
-        for e in flagged:
-            print(f"  [{e['severity'].upper()}] {e['exe']}  runs={e['runs']}")
+    print(f"  Total .pf files: {len(entries)}   Flagged: {len(flagged)}\n")
+    if not flagged:
+        cprint("  No suspicious entries found.", GREEN)
         return
+    print(f"  {'EXE Name':<35} {'Runs':>5}  {'Last Run (UTC)':<22}  Severity")
+    print(f"  {'─'*35} {'─'*5}  {'─'*22}  {'─'*12}")
+    for e in flagged:
+        lr  = e["last_run"].strftime("%Y-%m-%d %H:%M:%S") if e["last_run"] else "unknown"
+        col = sev_colour(e["severity"])
+        print(f"  {col}{e['exe']:<35}{RESET} {e['runs']:>5}  {lr:<22}  {col}{e['severity'].upper()}{RESET}")
 
-    table = Table(box=box.ROUNDED, show_lines=True, expand=True)
-    table.add_column("EXE Name",       min_width=24)
-    table.add_column("Runs", width=6,  no_wrap=True)
-    table.add_column("Last Run (UTC)", min_width=22)
-    table.add_column("Severity",       min_width=14)
-
-    for e in entries[:60]:   # cap at 60 rows
-        sev   = e["severity"]
-        style = _SEV_STYLE.get(sev, "")
-        lr    = e["last_run"].strftime("%Y-%m-%d %H:%M:%S") if e["last_run"] else "—"
-        name  = e["exe"]
-        if style:
-            table.add_row(
-                f"[{style}]{name}[/{style}]",
-                str(e["runs"]),
-                lr,
-                _sev_label(sev),
-            )
-        else:
-            table.add_row(name, str(e["runs"]), lr, _sev_label(sev))
-    console.print(table)
-
-
-def display_userassist(entries: list[dict]) -> None:
+def display_userassist(entries):
     rule("UserAssist — Programs Opened via Explorer / Start Menu")
     flagged = [e for e in entries if e["severity"]]
-    cprint(f"Total entries: {len(entries)}  |  Flagged: {len(flagged)}\n")
-
-    suspicious_only = [e for e in entries if e["severity"]]
-    if not suspicious_only:
-        cprint("No suspicious entries found.", "green")
+    print(f"  Total entries: {len(entries)}   Flagged: {len(flagged)}\n")
+    if not flagged:
+        cprint("  No suspicious entries found.", GREEN)
         return
+    print(f"  {'Program Path':<60}  {'Runs':>5}  Severity")
+    print(f"  {'─'*60}  {'─'*5}  {'─'*12}")
+    for e in flagged:
+        lr  = e["last_run"].strftime("%Y-%m-%d %H:%M:%S") if e["last_run"] else "unknown"
+        col = sev_colour(e["severity"])
+        path = e["decoded"][-60:]
+        print(f"  {col}{path:<60}{RESET}  {e['run_count']:>5}  {col}{e['severity'].upper()}{RESET}")
 
-    if not _RICH:
-        for e in suspicious_only:
-            print(f"  [{e['severity'].upper()}] {e['decoded']}")
-        return
-
-    table = Table(box=box.ROUNDED, show_lines=True, expand=True)
-    table.add_column("Decoded Path",   min_width=50)
-    table.add_column("Runs", width=6,  no_wrap=True)
-    table.add_column("Last Run (UTC)", min_width=22)
-    table.add_column("Severity",       min_width=14)
-
-    for e in suspicious_only:
-        sev   = e["severity"]
-        style = _SEV_STYLE.get(sev, "")
-        lr    = e["last_run"].strftime("%Y-%m-%d %H:%M:%S") if e["last_run"] else "—"
-        path  = e["decoded"][-80:]
-        table.add_row(
-            f"[{style}]{path}[/{style}]",
-            str(e["run_count"]),
-            lr,
-            _sev_label(sev),
-        )
-    console.print(table)
-
-
-def display_processes(procs: list[dict]) -> None:
+def display_processes(procs):
     rule("Running Processes")
     flagged = [p for p in procs if p["severity"]]
-    cprint(f"Total processes: {len(procs)}  |  Flagged: {len(flagged)}\n")
-
+    print(f"  Total processes: {len(procs)}   Flagged: {len(flagged)}\n")
     if not flagged:
-        cprint("No suspicious processes running.", "green")
+        cprint("  No suspicious processes running.", GREEN)
         return
-
-    if not _RICH:
-        for p in flagged:
-            print(f"  [{p['severity'].upper()}] {p['name']}  PID={p['pid']}")
-        return
-
-    table = Table(box=box.ROUNDED, show_lines=True)
-    table.add_column("Process Name", min_width=30)
-    table.add_column("PID",          width=8, no_wrap=True)
-    table.add_column("Severity",     min_width=14)
-
     for p in flagged:
-        sev   = p["severity"]
-        style = _SEV_STYLE.get(sev, "")
-        table.add_row(
-            f"[{style}]{p['name']}[/{style}]",
-            p["pid"],
-            _sev_label(sev),
-        )
-    console.print(table)
+        col = sev_colour(p["severity"])
+        print(f"  {col}[{p['severity'].upper()}]{RESET}  {p['name']}  (PID {p['pid']})")
 
-
-def display_files(files: list[dict]) -> None:
+def display_files(files):
     rule("Suspicious Files in Common Locations")
     if not files:
-        cprint("No suspicious files found in scanned locations.", "green")
+        cprint("  No suspicious files found.", GREEN)
         return
-
-    if not _RICH:
-        for f in files:
-            print(f"  [{f['severity'].upper()}] {f['path']}")
-        return
-
-    table = Table(box=box.ROUNDED, show_lines=True, expand=True)
-    table.add_column("File Name",     min_width=24)
-    table.add_column("Location",      min_width=30)
-    table.add_column("Modified",      width=17, no_wrap=True)
-    table.add_column("SHA-256",       min_width=20)
-    table.add_column("Severity",      min_width=14)
-
     for f in files:
-        sev   = f["severity"]
-        style = _SEV_STYLE.get(sev, "")
-        loc   = os.path.dirname(f["path"])
-        table.add_row(
-            f"[{style}]{f['name']}[/{style}]",
-            loc[-40:],
-            f["modified"],
-            f["sha256"][:20] + "…",
-            _sev_label(sev),
-        )
-    console.print(table)
+        col = sev_colour(f["severity"])
+        print(f"  {col}[{f['severity'].upper()}]{RESET}  {f['path']}")
+        print(f"         SHA-256: {f['sha256']}")
+        print(f"         Modified: {f['modified']}\n")
 
-
-def display_mods(mods: list[dict]) -> None:
+def display_mods(mods):
     rule(".minecraft Mods Folder")
     if not mods:
-        cprint("Mods folder is empty or not found.", "dim")
+        cprint("  Mods folder empty or not found.", DIM)
         return
-
-    if not _RICH:
-        for m in mods:
-            flag = f" [{m['severity'].upper()}]" if m["severity"] else ""
-            print(f"  {m['name']}{flag}")
-        return
-
-    table = Table(box=box.ROUNDED, show_lines=True)
-    table.add_column("Mod File",   min_width=30)
-    table.add_column("Size (KB)",  width=10, no_wrap=True)
-    table.add_column("Severity",   min_width=14)
-
+    print(f"  {'Mod File':<45} {'Size (KB)':>10}  Severity")
+    print(f"  {'─'*45} {'─'*10}  {'─'*12}")
     for m in mods:
-        sev   = m["severity"]
-        style = _SEV_STYLE.get(sev, "")
-        size  = str(round(m["size"] / 1024, 1))
-        table.add_row(
-            f"[{style}]{m['name']}[/{style}]",
-            size,
-            _sev_label(sev),
-        )
-    console.print(table)
+        col  = sev_colour(m["severity"])
+        size = str(round(m["size"] / 1024, 1))
+        sev  = f"{col}{m['severity'].upper()}{RESET}" if m["severity"] else f"{DIM}clean{RESET}"
+        print(f"  {col}{m['name']:<45}{RESET} {size:>10}  {sev}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Report export
+# Report
 # ─────────────────────────────────────────────────────────────────────────────
 
-def save_report(sysinfo: dict, pf: list, ua: list, procs: list,
-                files: list, mods: list, report_path: str) -> None:
-    ts    = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+def save_report(sysinfo, pf, ua, procs, files, mods, path):
     lines = [
-        f"SS Toolkit — Evidence Report",
-        f"Generated: {ts}",
-        f"Host: {sysinfo['hostname']}  |  User: {sysinfo['user']}",
-        f"OS: {sysinfo['os']}",
-        "=" * 70,
-        "",
+        "SS Toolkit — Evidence Report",
+        f"Generated : {sysinfo['timestamp']}",
+        f"Host      : {sysinfo['hostname']}",
+        f"User      : {sysinfo['user']}",
+        f"OS        : {sysinfo['os']}",
+        "=" * 70, "",
+        "PREFETCH — FLAGGED ENTRIES", "─" * 40,
     ]
-
-    # Prefetch
-    lines += ["PREFETCH — FLAGGED ENTRIES", "─" * 40]
     flagged_pf = [e for e in pf if e["severity"]]
-    if flagged_pf:
-        for e in flagged_pf:
-            lr = e["last_run"].strftime("%Y-%m-%d %H:%M:%S") if e["last_run"] else "unknown"
-            lines.append(f"  [{e['severity'].upper()}] {e['exe']}  runs={e['runs']}  last={lr}")
-    else:
-        lines.append("  None")
-    lines.append("")
-
-    # UserAssist
-    lines += ["USERASSIST — FLAGGED ENTRIES", "─" * 40]
+    lines += [f"  [{e['severity'].upper()}] {e['exe']}  runs={e['runs']}  last={e['last_run'].strftime('%Y-%m-%d %H:%M:%S') if e['last_run'] else '?'}" for e in flagged_pf] or ["  None"]
+    lines += ["", "USERASSIST — FLAGGED ENTRIES", "─" * 40]
     flagged_ua = [e for e in ua if e["severity"]]
-    if flagged_ua:
-        for e in flagged_ua:
-            lr = e["last_run"].strftime("%Y-%m-%d %H:%M:%S") if e["last_run"] else "unknown"
-            lines.append(f"  [{e['severity'].upper()}] {e['decoded']}  runs={e['run_count']}  last={lr}")
-    else:
-        lines.append("  None")
-    lines.append("")
-
-    # Processes
-    lines += ["RUNNING PROCESSES — FLAGGED", "─" * 40]
+    lines += [f"  [{e['severity'].upper()}] {e['decoded']}  runs={e['run_count']}" for e in flagged_ua] or ["  None"]
+    lines += ["", "RUNNING PROCESSES — FLAGGED", "─" * 40]
     flagged_pr = [p for p in procs if p["severity"]]
-    if flagged_pr:
-        for p in flagged_pr:
-            lines.append(f"  [{p['severity'].upper()}] {p['name']}  PID={p['pid']}")
-    else:
-        lines.append("  None")
-    lines.append("")
-
-    # Suspicious files
-    lines += ["SUSPICIOUS FILES", "─" * 40]
-    if files:
-        for f in files:
-            lines.append(f"  [{f['severity'].upper()}] {f['path']}")
-            lines.append(f"    SHA-256: {f['sha256']}")
-    else:
-        lines.append("  None")
-    lines.append("")
-
-    # Mods
-    lines += ["MINECRAFT MODS", "─" * 40]
-    if mods:
-        for m in mods:
-            flag = f" [{m['severity'].upper()}]" if m["severity"] else ""
-            lines.append(f"  {m['name']}{flag}")
-    else:
-        lines.append("  None / not installed")
-    lines.append("")
-
-    # Summary
-    total_flags = len(flagged_pf) + len(flagged_ua) + len(flagged_pr) + len(files)
+    lines += [f"  [{p['severity'].upper()}] {p['name']}  PID={p['pid']}" for p in flagged_pr] or ["  None"]
+    lines += ["", "SUSPICIOUS FILES", "─" * 40]
+    lines += [f"  [{f['severity'].upper()}] {f['path']}\n    SHA-256: {f['sha256']}" for f in files] or ["  None"]
+    lines += ["", "MINECRAFT MODS", "─" * 40]
+    lines += [f"  {m['name']}{' [' + m['severity'].upper() + ']' if m['severity'] else ''}" for m in mods] or ["  None / not installed"]
+    total = len(flagged_pf) + len(flagged_ua) + len(flagged_pr) + len(files)
     lines += [
-        "=" * 70,
-        f"TOTAL FLAGS: {total_flags}",
-        f"  Prefetch:    {len(flagged_pf)}",
-        f"  UserAssist:  {len(flagged_ua)}",
-        f"  Processes:   {len(flagged_pr)}",
-        f"  Files:       {len(files)}",
+        "", "=" * 70,
+        f"TOTAL FLAGS : {total}",
+        f"  Prefetch   : {len(flagged_pf)}",
+        f"  UserAssist : {len(flagged_ua)}",
+        f"  Processes  : {len(flagged_pr)}",
+        f"  Files      : {len(files)}",
     ]
-
-    with open(report_path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
-def main() -> None:
-    if _RICH:
-        console.print(Panel(
-            "[bold cyan]SS Toolkit — Windows Evidence Collector[/bold cyan]\n"
-            "[dim]Collecting evidence from this PC…[/dim]",
-            border_style="cyan",
-        ))
-    else:
-        print("SS Toolkit — Windows Evidence Collector")
-        print("Collecting evidence from this PC…\n")
+def main():
+    print(f"\n{CYAN}{BOLD}{'='*60}{RESET}")
+    print(f"{CYAN}{BOLD}  SS Toolkit — Windows Evidence Collector{RESET}")
+    print(f"{CYAN}{BOLD}{'='*60}{RESET}\n")
+    print("  Scanning... please wait\n")
 
-    if sys.platform != "win32":
-        cprint(
-            "\n[bold yellow]Warning:[/bold yellow] This collector is designed for Windows.\n"
-            "Some sections (Prefetch, UserAssist, Processes) will be empty on Mac/Linux.\n"
-        )
+    sysinfo = collect_sysinfo()
+    print(f"  {DIM}Host: {sysinfo['hostname']}  |  User: {sysinfo['user']}{RESET}")
+    print(f"  {DIM}OS:   {sysinfo['os']}{RESET}\n")
 
-    # ── Collect ──────────────────────────────────────────────────────────────
-    if _RICH:
-        with console.status("[dim]Scanning…[/dim]"):
-            sysinfo = collect_sysinfo()
-            pf      = collect_prefetch()
-            ua      = collect_userassist()
-            procs   = collect_processes()
-            files   = collect_suspicious_files()
-            mods    = collect_mods()
-    else:
-        print("Scanning…")
-        sysinfo = collect_sysinfo()
-        pf      = collect_prefetch()
-        ua      = collect_userassist()
-        procs   = collect_processes()
-        files   = collect_suspicious_files()
-        mods    = collect_mods()
+    print(f"  {DIM}[1/5] Scanning Prefetch...{RESET}")
+    pf = collect_prefetch()
 
-    # ── Display ──────────────────────────────────────────────────────────────
-    if _RICH:
-        console.print(Panel(
-            f"[bold]Hostname:[/bold]  {sysinfo['hostname']}\n"
-            f"[bold]User:[/bold]      {sysinfo['user']}\n"
-            f"[bold]OS:[/bold]        {sysinfo['os']}\n"
-            f"[bold]Scanned:[/bold]   {sysinfo['timestamp']}",
-            title="[bold]System Info[/bold]",
-            border_style="dim",
-        ))
+    print(f"  {DIM}[2/5] Reading UserAssist registry...{RESET}")
+    ua = collect_userassist()
+
+    print(f"  {DIM}[3/5] Checking running processes...{RESET}")
+    procs = collect_processes()
+
+    print(f"  {DIM}[4/5] Scanning for suspicious files...{RESET}")
+    files = collect_suspicious_files()
+
+    print(f"  {DIM}[5/5] Checking .minecraft mods...{RESET}")
+    mods = collect_mods()
 
     display_prefetch(pf)
     display_userassist(ua)
@@ -689,39 +487,34 @@ def main() -> None:
     display_files(files)
     display_mods(mods)
 
-    # ── Summary ──────────────────────────────────────────────────────────────
     total_flags = (
         len([e for e in pf    if e["severity"]]) +
         len([e for e in ua    if e["severity"]]) +
         len([e for e in procs if e["severity"]]) +
         len(files)
     )
+
     rule("Summary")
     if total_flags == 0:
-        cprint("No suspicious findings detected.", "bold green")
+        cprint(f"  No suspicious findings detected.", GREEN + BOLD)
     else:
-        cprint(f"Total flags: {total_flags}", "bold red")
+        cprint(f"  Total flags: {total_flags}", RED + BOLD)
 
-    # ── Save report ───────────────────────────────────────────────────────────
-    ts          = datetime.now().strftime("%Y%m%d_%H%M%S")
-    desktop     = os.path.join(os.path.expandvars("%USERPROFILE%"), "Desktop") \
-                  if sys.platform == "win32" else os.path.expanduser("~")
-    report_path = os.path.join(desktop, f"ss_report_{ts}.txt")
+    ts      = datetime.now().strftime("%Y%m%d_%H%M%S")
+    desktop = os.path.join(os.path.expandvars("%USERPROFILE%"), "Desktop") if sys.platform == "win32" else os.path.expanduser("~")
+    report  = os.path.join(desktop, f"ss_report_{ts}.txt")
 
-    save_report(sysinfo, pf, ua, procs, files, mods, report_path)
-    cprint(f"\n[bold green]Report saved to:[/bold green] {report_path}")
+    save_report(sysinfo, pf, ua, procs, files, mods, report)
+    cprint(f"\n  Report saved to: {report}", GREEN + BOLD)
 
-    input("\nPress Enter to exit…")
+    print(f"\n{CYAN}{'='*60}{RESET}")
+    input("\n  Press Enter to exit...")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
-        import traceback
-        print("\n" + "=" * 60)
-        print("ERROR — something went wrong:")
-        print("=" * 60)
+    except Exception:
+        print(f"\n{RED}{BOLD}ERROR — something went wrong:{RESET}")
         traceback.print_exc()
-        print("=" * 60)
-        input("\nPress Enter to exit…")
+        input("\nPress Enter to exit...")

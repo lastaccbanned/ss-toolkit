@@ -715,4 +715,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        print("\n" + "=" * 60)
+        print("ERROR — something went wrong:")
+        print("=" * 60)
+        traceback.print_exc()
+        print("=" * 60)
+        input("\nPress Enter to exit…")

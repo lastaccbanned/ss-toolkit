@@ -27,10 +27,32 @@ jobs:
           pip install pyinstaller
 
       - name: Build ss-toolkit.exe
-        run: pyinstaller --onefile --console --name ss-toolkit main.py
+        run: >
+          pyinstaller --onefile --console --name ss-toolkit
+          --hidden-import rich
+          --hidden-import rich.console
+          --hidden-import rich.table
+          --hidden-import rich.panel
+          --hidden-import rich.box
+          --collect-all rich
+          main.py
 
       - name: Build collector.exe
-        run: pyinstaller --onefile --console --name collector collector.py
+        run: >
+          pyinstaller --onefile --console --name collector
+          --hidden-import winreg
+          --hidden-import ctypes
+          --hidden-import struct
+          --hidden-import hashlib
+          --hidden-import subprocess
+          --hidden-import platform
+          --hidden-import rich
+          --hidden-import rich.console
+          --hidden-import rich.table
+          --hidden-import rich.panel
+          --hidden-import rich.box
+          --collect-all rich
+          collector.py
 
       - name: Delete old latest release
         run: gh release delete latest --yes --cleanup-tag

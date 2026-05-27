@@ -25,7 +25,11 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-from tools.shared import CHEAT_CLIENT_NAMES, OAC_FLAG_KEYWORDS, SEVERITY_STYLE
+from tools.shared import (
+    GHOST_CLIENTS, BYPASS_INDICATORS, FREE_CLIENTS,
+    CHEAT_FEATURES, DEBUG_TOOLS,
+    OAC_FLAG_KEYWORDS, SEVERITY_STYLE,
+)
 
 console = Console()
 
@@ -36,28 +40,51 @@ console = Console()
 def _classify_line(line: str) -> tuple[str, list[str]]:
     """
     Return (severity, [matched_keywords]) for a single line of PDF text.
-    severity is one of 'critical', 'suspicious', or '' (clean / uninteresting).
+
+    Severity tiers:
+      'critical'   — OAC flag keyword, ghost client, or bypass/injection tool
+      'suspicious' — free client, cheat feature keyword, or debug tool
+      ''           — nothing of interest
     """
     low = line.lower()
-    matched: list[str] = []
+    matched_critical:   list[str] = []
+    matched_suspicious: list[str] = []
 
-    # Check for OAC's own flag keywords first (higher severity)
+    # ── Tier 1: OAC's own flag keywords ─────────────────────────────────────
     for kw in OAC_FLAG_KEYWORDS:
         if kw.lower() in low:
-            matched.append(kw)
+            matched_critical.append(kw)
 
-    # Check for cheat client names
-    for kw in CHEAT_CLIENT_NAMES:
+    # ── Tier 1: Ghost clients ────────────────────────────────────────────────
+    for kw in GHOST_CLIENTS:
         if kw in low:
-            matched.append(kw)
+            matched_critical.append(kw)
 
-    if not matched:
-        return "", []
+    # ── Tier 1: Bypass / injection indicators ───────────────────────────────
+    for kw in BYPASS_INDICATORS:
+        if kw in low:
+            matched_critical.append(kw)
 
-    # Any OAC flag keyword → critical; cheat name only → suspicious
-    if any(kw.upper() in OAC_FLAG_KEYWORDS for kw in matched):
-        return "critical", matched
-    return "suspicious", matched
+    # ── Tier 2: Free clients ─────────────────────────────────────────────────
+    for kw in FREE_CLIENTS:
+        if kw in low:
+            matched_suspicious.append(kw)
+
+    # ── Tier 2: Cheat feature keywords ──────────────────────────────────────
+    for kw in CHEAT_FEATURES:
+        if kw in low:
+            matched_suspicious.append(kw)
+
+    # ── Tier 2: Debug / RE tools ────────────────────────────────────────────
+    for kw in DEBUG_TOOLS:
+        if kw in low:
+            matched_suspicious.append(kw)
+
+    if matched_critical:
+        return "critical", matched_critical + matched_suspicious
+    if matched_suspicious:
+        return "suspicious", matched_suspicious
+    return "", []
 
 
 def _extract_text(pdf_path: str) -> list[tuple[int, str]]:  # noqa: F821

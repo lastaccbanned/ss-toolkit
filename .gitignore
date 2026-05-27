@@ -1,0 +1,23 @@
+# Config (contains Discord bot token — never commit this)
+config.json
+
+# Generated data files
+data/cheats.db
+data/timeline_events.json
+data/timeline.png
+data/*.png
+data/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+
+# Internal settings
+.config/
+
+# macOS
+.DS_Store

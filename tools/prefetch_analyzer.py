@@ -277,19 +277,47 @@ def print_clusters(clusters: list[list[dict]]) -> None:
 # Interactive entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _auto_find_prefetch() -> str | None:
+    """
+    Return the best prefetch folder path without asking the user.
+      • Windows  → C:\\Windows\\Prefetch  (always exists)
+      • Mac/Linux → data/prefetch/  (drop .pf files here after AnyDesk transfer)
+    Returns None if nothing is found.
+    """
+    # Windows: use the real Prefetch folder
+    win_path = r"C:\Windows\Prefetch"
+    if sys.platform == "win32" and os.path.isdir(win_path):
+        return win_path
+
+    # Mac / Linux: check the local drop folder
+    local_path = os.path.join("data", "prefetch")
+    if os.path.isdir(local_path) and any(
+        f.lower().endswith(".pf") for f in os.listdir(local_path)
+    ):
+        return local_path
+
+    return None
+
+
 def main() -> None:
     console.rule("[bold blue]Tool 2 — Prefetch File Analyzer[/bold blue]")
-    console.print(
-        "Provide a path to a folder containing [bold].pf[/bold] files "
-        "(usually [italic]C:\\\\Windows\\\\Prefetch[/italic]) "
-        "or a single .pf file.\n"
-    )
 
-    raw_path = console.input("[bold]Enter path:[/bold] ").strip().strip('"').strip("'")
+    # ── Auto-detect path ─────────────────────────────────────────────────────
+    raw_path = _auto_find_prefetch()
 
-    if not raw_path:
-        console.print("[red]No path entered. Returning to menu.[/red]")
-        return
+    if raw_path:
+        console.print(f"[dim]Auto-detected prefetch folder:[/dim] [bold]{raw_path}[/bold]\n")
+    else:
+        # Only ask if auto-detection failed
+        if sys.platform != "win32":
+            console.print(
+                "[dim]Tip: drop .pf files into [bold]data/prefetch/[/bold] "
+                "and this tool will find them automatically next time.\n[/dim]"
+            )
+        raw_path = console.input("[bold]Enter path to Prefetch folder (or single .pf file):[/bold] ").strip().strip('"').strip("'")
+        if not raw_path:
+            console.print("[red]No path entered. Returning to menu.[/red]")
+            return
 
     pf_files: list[str] = []
 

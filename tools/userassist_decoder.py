@@ -278,34 +278,67 @@ def print_entries(entries: list[dict]) -> None:
 from pathlib import Path
 
 
+def _auto_find_reg() -> str | None:
+    """
+    Return the best source for UserAssist data without asking the user.
+      • Windows  → live registry (no file needed)
+      • Mac/Linux → data/ua.reg  (drop the exported .reg file here)
+    Returns 'live' for live registry, a file path for .reg, or None if nothing found.
+    """
+    if sys.platform == "win32":
+        return "live"
+
+    # Mac / Linux: check the standard drop location
+    for candidate in [
+        os.path.join("data", "ua.reg"),
+        os.path.join("data", "userassist.reg"),
+    ]:
+        if os.path.isfile(candidate):
+            return candidate
+
+    return None
+
+
 def main() -> None:
     console.rule("[bold blue]Tool 3 — UserAssist ROT13 Decoder[/bold blue]")
-    console.print(
-        "Decodes the ROT13-encoded Windows UserAssist registry entries and "
-        "flags suspicious program paths.\n"
-    )
-
-    console.print("  [bold]1.[/bold] Analyse a .reg export file  (works on Mac / Linux / Windows)")
-    console.print("  [bold]2.[/bold] Read live registry           (Windows only)\n")
-    choice = console.input("[bold]Choose (1 or 2):[/bold] ").strip()
 
     entries: list[dict] = []
 
-    if choice == "1":
-        reg_path = console.input("[bold]Path to .reg file:[/bold] ").strip().strip('"').strip("'")
-        if not reg_path or not os.path.isfile(reg_path):
-            console.print("[red]File not found. Returning to menu.[/red]")
-            return
-        console.print(f"[dim]Parsing {reg_path} …[/dim]\n")
-        entries = parse_reg_file(reg_path)
+    # ── Auto-detect source ───────────────────────────────────────────────────
+    source = _auto_find_reg()
 
-    elif choice == "2":
-        console.print("[dim]Reading live registry…[/dim]\n")
+    if source == "live":
+        console.print("[dim]Windows detected — reading live registry…[/dim]\n")
         entries = read_live_registry()
 
+    elif source:
+        console.print(f"[dim]Auto-detected registry export:[/dim] [bold]{source}[/bold]\n")
+        entries = parse_reg_file(source)
+
     else:
-        console.print("[red]Invalid choice.[/red]")
-        return
+        # Nothing found — ask
+        console.print(
+            "[dim]Tip: export the UserAssist key on the suspect's PC and save it as "
+            "[bold]data/ua.reg[/bold] — this tool will find it automatically next time.\n\n"
+            "To export on their PC:  [bold]Win+R → regedit → "
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\UserAssist "
+            "→ right-click → Export[/bold][/dim]\n"
+        )
+        console.print("  [bold]1.[/bold] Enter path to a .reg file manually")
+        console.print("  [bold]2.[/bold] Read live registry (Windows only)\n")
+        choice = console.input("[bold]Choose (1 or 2):[/bold] ").strip()
+
+        if choice == "1":
+            reg_path = console.input("[bold]Path to .reg file:[/bold] ").strip().strip('"').strip("'")
+            if not reg_path or not os.path.isfile(reg_path):
+                console.print("[red]File not found. Returning to menu.[/red]")
+                return
+            entries = parse_reg_file(reg_path)
+        elif choice == "2":
+            entries = read_live_registry()
+        else:
+            console.print("[red]Invalid choice.[/red]")
+            return
 
     print_entries(entries)
 

@@ -1,4 +1,4 @@
-name: Build Windows EXE
+name: Build Windows EXEs
 
 on:
   push:
@@ -23,12 +23,22 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build EXE
+      - name: Build ss-toolkit.exe  (full menu toolkit)
         run: |
           pyinstaller --onefile --console --name ss-toolkit main.py
 
-      - name: Upload EXE as artifact
+      - name: Build collector.exe  (drop on suspect PC)
+        run: |
+          pyinstaller --onefile --console --name collector collector.py
+
+      - name: Upload ss-toolkit.exe
         uses: actions/upload-artifact@v4
         with:
           name: ss-toolkit-windows
           path: dist/ss-toolkit.exe
+
+      - name: Upload collector.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: collector-windows
+          path: dist/collector.exe

@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -23,22 +26,27 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build ss-toolkit.exe  (full menu toolkit)
+      - name: Build ss-toolkit.exe
+        run: pyinstaller --onefile --console --name ss-toolkit main.py
+
+      - name: Build collector.exe
+        run: pyinstaller --onefile --console --name collector collector.py
+
+      - name: Delete old latest release
+        run: gh release delete latest --yes --cleanup-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Publish release
         run: |
-          pyinstaller --onefile --console --name ss-toolkit main.py
+          gh release create latest dist/ss-toolkit.exe dist/collector.exe `
+            --title "Latest Build" `
+            --notes "## Downloads
 
-      - name: Build collector.exe  (drop on suspect PC)
-        run: |
-          pyinstaller --onefile --console --name collector collector.py
-
-      - name: Upload ss-toolkit.exe
-        uses: actions/upload-artifact@v4
-        with:
-          name: ss-toolkit-windows
-          path: dist/ss-toolkit.exe
-
-      - name: Upload collector.exe
-        uses: actions/upload-artifact@v4
-        with:
-          name: collector-windows
-          path: dist/collector.exe
+          | File | Description |
+          |------|-------------|
+          | **collector.exe** | Drop on suspect PC during screenshare — auto-collects all evidence |
+          | **ss-toolkit.exe** | Full analysis toolkit — run on your own PC |"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

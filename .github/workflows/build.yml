@@ -43,10 +43,15 @@ jobs:
           --uac-admin
           --hidden-import winreg
           --hidden-import ctypes
+          --hidden-import ctypes.windll
           --hidden-import struct
           --hidden-import hashlib
           --hidden-import subprocess
           --hidden-import platform
+          --hidden-import glob
+          --hidden-import time
+          --hidden-import re
+          --hidden-import json
           collector.py
 
       - name: Delete old latest release

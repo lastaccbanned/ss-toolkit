@@ -62,35 +62,85 @@ def add_event(ts, category, description, severity="info", detail=""):
                          "sev": severity, "detail": detail})
 
 # ── Detection lists ───────────────────────────────────────────────────────────
+# CRITICAL — confirmed ghost clients and injection frameworks.
+# Only names specific enough that they cannot appear in legitimate software.
 GHOST_CLIENTS = [
-    "vape","vapelite","vape lite","vape v4","drip","dripx","drip x",
-    "stardust","atom","reflex","flaw","ember","starscript","boze","solis",
-    "fentanyl","pyro","azura","flux","exhibition","astolfo","autumn","vertex",
-    "entropy","quasar","gorilla","prism","zephyr","tenacity","hybrid","eagle",
-    "albedo","cheeto","monsoon","motion","inertia","novoline","remix","rise",
-    "sigma","raven","ares","rusherhack","schildblade","blackout","luma",
-    "ambrosia","horion","weave","weaveloader","weave-loader","ghostclient",
-    "ghost client","cringeware",
+    # Vape family
+    "vape", "vapelite", "vape lite", "vape v4",
+    # Drip family
+    "drip", "dripx", "drip x",
+    # Named ghost clients (unique enough to not false-positive)
+    "stardust", "starscript", "boze", "fentanyl", "astolfo",
+    "exhibition", "tenacity", "cheeto", "novoline", "sigma",
+    "rusherhack", "schildblade", "horion", "cringeware",
+    # Weave injection framework
+    "weave", "weaveloader", "weave-loader", "weave_loader",
+    # Generic labels
+    "ghostclient", "ghost client",
 ]
+
+# CRITICAL — anti-cheat bypass techniques and injection methods.
+# Removed: "bypass" (too generic), "bytecode", "memory patch", "unsigned jar",
+#          "hook detected", "inline hook" (all appear in legitimate software).
 BYPASS_INDICATORS = [
-    "bypass","javaagent","java agent","premain","agentmain","agent.jar",
-    "classtransformer","bytebuddy","javassist","createremotethread",
-    "dll inject","dll injection","memory patch","recaf","watchdog bypass",
-    "grim bypass","intave bypass","polar bypass","vulcan bypass",
-    "matrix bypass","hypixel bypass","badlion bypass","unsigned jar",
-    "bytecode","classpath inject","hook detected","inline hook",
+    # Java agent abuse (legitimate Minecraft never uses -javaagent in prod)
+    "javaagent", "java agent", "-javaagent:", "premain", "agentmain", "agent.jar",
+    # Bytecode manipulation frameworks
+    "classtransformer", "class transformer",
+    "bytebuddy", "byte buddy", "byte-buddy",
+    "javassist",
+    # DLL / process injection (Windows APIs with no legit Minecraft use)
+    "createremotethread", "dll inject", "dll injection", "dllinjection",
+    # Java bytecode editor — primary cheat development tool
+    "recaf",
+    # Named anti-cheat bypasses (very specific, only appear in cheat context)
+    "watchdog bypass", "watchdogbypass",
+    "grim bypass", "grimbypass",
+    "intave bypass", "intavebypass",
+    "polar bypass", "polarbypass",
+    "vulcan bypass", "vulcanbypass",
+    "matrix bypass", "matrixbypass",
+    "hypixel bypass", "badlion bypass",
+    "verus bypass", "karhu bypass",
 ]
-FREE_CLIENTS = ["wurst","impact","aristois","meteor","future","liquidbounce","nodus","enchanted"]
-DEBUG_TOOLS  = [
-    "processhacker","process hacker","cheatengine","cheat engine","wireshark",
-    "fiddler","ollydbg","x64dbg","x32dbg","dnspy","de4dot","dotpeek","ilspy",
-    "jadx","jd-gui","procmon","procexp","windbg","ghidra","ida pro","idapro",
+
+# SUSPICIOUS — confirmed free / open-source cheat clients.
+# Removed: "impact" (too generic), "meteor" (Meteor Development framework),
+#          "future" (extremely common word), "enchanted" (Minecraft mechanic).
+FREE_CLIENTS = [
+    "wurst", "aristois", "liquidbounce", "nodus",
 ]
+
+# SUSPICIOUS — tools whose only realistic use on a Minecraft gaming PC is cheating.
+# Removed: wireshark, fiddler, procmon, procexp, windbg, ghidra, ida pro, dotpeek,
+#          ilspy — all standard developer / sysadmin tools with heavy legitimate use.
+DEBUG_TOOLS = [
+    "cheatengine", "cheat engine",   # direct memory editing
+    "processhacker", "process hacker", # process injection / inspection
+    "x64dbg", "x32dbg",              # debugger used to reverse anti-cheat
+    "dnspy",                          # .NET decompiler for anti-cheat bypass
+    "de4dot",                         # .NET deobfuscator
+    "jadx", "jd-gui",                # Java decompilers (Minecraft is Java)
+    "ollydbg",                        # legacy debugger, no legit use on gaming PC
+]
+
+# SUSPICIOUS — cheat feature names specific enough to not appear in legitimate software.
+# Removed: freecam (legit mod), scaffold, aim assist (normal on controllers),
+#          autoblock, fastplace, fastbreak, strafe, reach, hitbox, velocity, timer, blink.
 CHEAT_FEATURES = [
-    "killaura","kill aura","xray","x-ray","aimbot","freecam","noclip",
-    "autoclicker","auto clicker","scaffold","crystalaura","crystal aura",
-    "bhop","triggerbot","aimassist","aim assist","speedhack","speed hack",
-    "flyhack","fly hack","autoblock","fastplace","fastbreak","jesus","waterwalk",
+    "killaura", "kill aura", "kill_aura",
+    "xray", "x-ray",
+    "aimbot",
+    "noclip", "no clip", "no_clip",
+    "crystalaura", "crystal aura", "crystal_aura",
+    "bhop", "bunnyhop", "bunny hop",
+    "antikb", "anti-kb", "anti kb",
+    "triggerbot", "trigger bot",
+    "autoclicker", "auto clicker", "auto_clicker",
+    "speedhack", "speed hack",
+    "flyhack", "fly hack",
+    "jesus",       # water-walk cheat, unique enough in this context
+    "waterwalk",
 ]
 
 def classify(name: str) -> str:
@@ -101,7 +151,15 @@ def classify(name: str) -> str:
         if kw in low: return "suspicious"
     return ""
 
-SUSPICIOUS_APPDATA_PATHS = ["\\appdata\\", "\\temp\\", "\\roaming\\", "\\downloads\\", "\\local\\temp"]
+# Paths that are suspicious for an executable to be RUNNING FROM.
+# Removed \\appdata\\ and \\roaming\\ — Discord, Minecraft, and hundreds of
+# legitimate programs live there and would all false-positive.
+SUSPICIOUS_APPDATA_PATHS = [
+    "\\appdata\\local\\temp",
+    "\\temp\\",
+    "\\downloads\\",
+]
+
 def flag_path(path: str) -> bool:
     low = path.lower()
     return any(p in low for p in SUSPICIOUS_APPDATA_PATHS)
